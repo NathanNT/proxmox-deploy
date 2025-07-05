@@ -2,23 +2,23 @@
 
 set -e
 
-echo "=== Configuring GPU Passthrough ==="
+echo "=== Configuring IOMMU for GPU Passthrough ==="
 
-# Detect GPU vendor
-GPU_VENDOR=$(lspci | grep -E "VGA|3D" | grep -E "AMD|Intel" | awk '{print $5}' | head -n1)
+# Detect CPU vendor (Intel or AMD)
+CPU_VENDOR=$(lscpu | grep "Vendor ID" | awk '{print $3}')
 
-if [[ "$GPU_VENDOR" == "AMD" ]]; then
-  IOMMU_FLAG="amd_iommu=on"
-  echo "Detected AMD GPU"
-elif [[ "$GPU_VENDOR" == "Intel" ]]; then
+if [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
   IOMMU_FLAG="intel_iommu=on"
-  echo "Detected Intel GPU"
+  echo "Detected Intel CPU"
+elif [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
+  IOMMU_FLAG="amd_iommu=on"
+  echo "Detected AMD CPU"
 else
-  echo "Unsupported or undetected GPU vendor. Only AMD and Intel are supported in this script."
+  echo "Unsupported or unknown CPU vendor. Only Intel and AMD are supported."
   exit 1
 fi
 
-# Add vfio modules to /etc/modules if not present
+# Add vfio modules to /etc/modules
 echo "Adding vfio modules to /etc/modules"
 for mod in vfio vfio_iommu_type1 vfio_pci vfio_virqfd; do
   grep -qxF "$mod" /etc/modules || echo "$mod" >> /etc/modules
@@ -32,9 +32,9 @@ else
   echo "GRUB_CMDLINE_LINUX=\"$IOMMU_FLAG iommu=pt\"" >> /etc/default/grub
 fi
 
-# Update /etc/kernel/cmdline if it exists (for systemd-boot systems)
+# If using systemd-boot (common on ZFS installs), update kernel cmdline
 if [[ -f /etc/kernel/cmdline ]]; then
-  echo "Adding IOMMU options to /etc/kernel/cmdline"
+  echo "Adding IOMMU flags to /etc/kernel/cmdline"
   if ! grep -q "$IOMMU_FLAG" /etc/kernel/cmdline; then
     echo "$(cat /etc/kernel/cmdline) $IOMMU_FLAG iommu=pt" > /etc/kernel/cmdline
   fi
@@ -48,4 +48,4 @@ update-grub
 echo "Updating initramfs"
 update-initramfs -u -k all
 
-echo "GPU passthrough configuration complete. Please reboot the system."
+echo "IOMMU setup complete. Reboot required for changes to take effect."
