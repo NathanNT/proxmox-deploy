@@ -4,8 +4,8 @@ set -e
 
 echo "=== Configuring IOMMU for GPU Passthrough ==="
 
-# Detect CPU vendor reliably
-CPU_VENDOR=$(lscpu | awk -F: '/Vendor ID/ {gsub(/^[ \t]+/, "", $2); print $2}')
+# Detect CPU vendor from /proc/cpuinfo (more reliable across systems)
+CPU_VENDOR=$(grep -m1 "vendor_id" /proc/cpuinfo | awk '{print $3}')
 
 if [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
   IOMMU_FLAG="intel_iommu=on"
@@ -14,7 +14,7 @@ elif [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
   IOMMU_FLAG="amd_iommu=on"
   echo "Detected AMD CPU"
 else
-  echo "Unsupported or unknown CPU vendor. Only Intel and AMD are supported."
+  echo "Unsupported or unknown CPU vendor: $CPU_VENDOR"
   exit 1
 fi
 
