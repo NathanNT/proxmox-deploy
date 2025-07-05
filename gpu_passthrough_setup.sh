@@ -4,8 +4,8 @@ set -e
 
 echo "=== Configuring IOMMU for GPU Passthrough ==="
 
-# Detect CPU vendor (Intel or AMD)
-CPU_VENDOR=$(lscpu | grep "Vendor ID" | awk '{print $3}')
+# Detect CPU vendor reliably
+CPU_VENDOR=$(lscpu | awk -F: '/Vendor ID/ {gsub(/^[ \t]+/, "", $2); print $2}')
 
 if [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
   IOMMU_FLAG="intel_iommu=on"
@@ -24,17 +24,17 @@ for mod in vfio vfio_iommu_type1 vfio_pci vfio_virqfd; do
   grep -qxF "$mod" /etc/modules || echo "$mod" >> /etc/modules
 done
 
-# Update GRUB with IOMMU options
-echo "Enabling IOMMU in GRUB"
+# Enable IOMMU in GRUB
+echo "Updating GRUB to enable IOMMU"
 if grep -q "GRUB_CMDLINE_LINUX" /etc/default/grub; then
   sed -i "s/GRUB_CMDLINE_LINUX=\"\(.*\)\"/GRUB_CMDLINE_LINUX=\"\1 $IOMMU_FLAG iommu=pt\"/" /etc/default/grub
 else
   echo "GRUB_CMDLINE_LINUX=\"$IOMMU_FLAG iommu=pt\"" >> /etc/default/grub
 fi
 
-# If using systemd-boot (common on ZFS installs), update kernel cmdline
+# If using systemd-boot (ZFS installs), update /etc/kernel/cmdline
 if [[ -f /etc/kernel/cmdline ]]; then
-  echo "Adding IOMMU flags to /etc/kernel/cmdline"
+  echo "Updating /etc/kernel/cmdline"
   if ! grep -q "$IOMMU_FLAG" /etc/kernel/cmdline; then
     echo "$(cat /etc/kernel/cmdline) $IOMMU_FLAG iommu=pt" > /etc/kernel/cmdline
   fi
@@ -42,10 +42,10 @@ if [[ -f /etc/kernel/cmdline ]]; then
 fi
 
 # Update GRUB and initramfs
-echo "Updating GRUB"
+echo "Running update-grub"
 update-grub
 
-echo "Updating initramfs"
+echo "Running update-initramfs"
 update-initramfs -u -k all
 
-echo "IOMMU setup complete. Reboot required for changes to take effect."
+echo "IOMMU setup complete. Reboot is required for changes to take effect."
