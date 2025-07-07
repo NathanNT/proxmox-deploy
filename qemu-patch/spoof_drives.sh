@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # === CONFIGURATION ===
-QEMU_DIR="$HOME/pve-qemu/qemu" # <-- adapte si besoin
+QEMU_DIR="./pve-qemu/qemu" # <-- adapte si besoin
 CORE_FILE="${QEMU_DIR}/hw/ide/core.c"
 BACKUP_DIR="${QEMU_DIR}/.spoof_backup"
 

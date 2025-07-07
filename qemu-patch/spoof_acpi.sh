@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # === CONFIGURATION ===
-QEMU_DIR="$HOME/pve-qemu/qemu" # <-- adapte si besoin
+QEMU_DIR="./pve-qemu/qemu" # <-- adapte si besoin
 H_FILE="${QEMU_DIR}/include/hw/acpi/aml-build.h"
 C_FILE="${QEMU_DIR}/hw/acpi/aml-build.c"
 FAKE_BATTERY_DSL="$HOME/fake_battery.dsl"

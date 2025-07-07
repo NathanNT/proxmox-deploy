@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # === CONFIGURATION ===
-QEMU_DIR="$HOME/pve-qemu/qemu"  # ← adapte si besoin
+QEMU_DIR="./pve-qemu/qemu"  # ← adapte si besoin
 QEMU_VERSION="10.0.2"
 CHIPSET_FILE=""
 SMBIOS_FILE="${QEMU_DIR}/hw/smbios/smbios.c"
