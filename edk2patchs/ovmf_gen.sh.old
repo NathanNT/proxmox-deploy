@@ -45,32 +45,15 @@ reset_workspace() {
   mkdir -p "$FIRMWARE_DIR"
 }
 
-fetch_ovmf_sources() {
+build_ovmf() {
   log "Clonage EDK2"
   git clone --depth=1 --branch "$EDK2_VERSION" https://github.com/tianocore/edk2.git "$SRC_DIR"
   pushd "$SRC_DIR" >/dev/null
-
   git submodule update --init
 
   [[ -f "$PATCH_DIR/$OVMF_PATCH" ]] || fatal "Patch manquant : $PATCH_DIR/$OVMF_PATCH"
   git apply "$PATCH_DIR/$OVMF_PATCH"
   log "Patch appliqué : $OVMF_PATCH"
-
-  # Copie du logo personnalisé
-  local logo_path="/root/nogo.bmp"
-  local logo_dest="MdeModulePkg/Logo/Logo.bmp"
-  if [[ -f "$logo_path" ]]; then
-    cp -f "$logo_path" "$logo_dest"
-    log "Logo personnalisé copié dans $logo_dest"
-  else
-    log "Avertissement : logo non trouvé à $logo_path. Aucun logo personnalisé appliqué."
-  fi
-
-  popd >/dev/null
-}
-
-compile_ovmf() {
-  pushd "$SRC_DIR" >/dev/null
 
   export WORKSPACE="$SRC_DIR"
   export EDK_TOOLS_PATH="$SRC_DIR/BaseTools"
@@ -82,18 +65,22 @@ compile_ovmf() {
   source edksetup.sh
 
   log "Compilation OVMF"
-  build -a X64 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE -t GCC5 \
-        --define SECURE_BOOT_ENABLE=TRUE \
-        --define TPM_ENABLE=TRUE
-
+  build \
+      -a X64 \
+      -p OvmfPkg/OvmfPkgX64.dsc \
+      -b RELEASE \
+      -t GCC5 \
+      -n 0 \
+      -s \
+      -q \
+      --define SECURE_BOOT_ENABLE=TRUE \
+      --define TPM_CONFIG_ENABLE=TRUE \
+      --define TPM_ENABLE=TRUE \
+      --define TPM1_ENABLE=TRUE \
+      --define TPM2_ENABLE=TRUE
   log "Conversion en qcow2"
-  qemu-img convert -f raw -O qcow2 Build/OvmfX64/RELEASE_GCC5/FV/OVMF_CODE.fd \
-    "$FIRMWARE_DIR/OVMF_CODE.secboot.4m.qcow2"
-
-  qemu-img convert -f raw -O qcow2 Build/OvmfX64/RELEASE_GCC5/FV/OVMF_VARS.fd \
-    "$FIRMWARE_DIR/OVMF_VARS.secboot.4m.qcow2"
-
-  cp "$FIRMWARE_DIR/OVMF_VARS.secboot.4m.qcow2" "$VARS_IN"
+  qemu-img convert -f raw -O qcow2 Build/OvmfX64/RELEASE_GCC5/FV/OVMF_CODE.fd "$FIRMWARE_DIR/OVMF_CODE.secboot.4m.qcow2"
+  qemu-img convert -f raw -O qcow2 Build/OvmfX64/RELEASE_GCC5/FV/OVMF_VARS.fd "$VARS_IN"
 
   popd >/dev/null
   log "Firmware prêt dans $FIRMWARE_DIR"
@@ -103,28 +90,52 @@ inject_certs() {
   command -v virt-fw-vars >/dev/null || fatal "virt-fw-vars non installé"
   [[ -f "$VARS_IN" ]] || fatal "Fichier VARS introuvable : $VARS_IN"
 
-  local UUID="8be4df61-93ca-11d2-aa0d-00e098032b8c"
-  local tmp=$(mktemp -d)
+  local UUID="8be4df61-93ca-11d2-aa0d-00e098032b8c"   # EFI_GLOBAL_VARIABLE
+  local tmp
+  tmp=$(mktemp -d)
+
   pushd "$tmp" >/dev/null
 
-  log "Téléchargement certificats Microsoft"
+  log "Téléchargement des certificats Microsoft (ensemble 2023 + PCA2011)…"
   base="https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PreSignedObjects"
-  curl -sOL "$base/PK/Certificate/WindowsOEMDevicesPK.der"
-  curl -sOL "$base/KEK/Certificates/MicCorKEKCA2011_2011-06-24.der"
-  curl -sOL "$base/DB/Certificates/MicCorUEFCA2011_2011-06-27.der"
-  curl -sOL "https://uefi.org/sites/default/files/resources/dbxupdate_x64.bin"
 
-  log "Injection certificats"
-  virt-fw-vars --input "$VARS_IN" --output "$VARS_SECURE" --secure-boot \
-      --set-pk "$UUID" WindowsOEMDevicesPK.der \
-      --add-kek "$UUID" MicCorKEKCA2011_2011-06-24.der \
-      --add-db  "$UUID" MicCorUEFCA2011_2011-06-27.der \
-      --set-dbx dbxupdate_x64.bin
+  # --- PK --------------------------------------------------------------
+  curl -sL "$base/PK/Certificate/WindowsOEMDevicesPK.der" -o PK.der
+
+  # --- KEK 2023 --------------------------------------------------------
+  curl -sL "$base/KEK/Certificates/microsoft%20corporation%20kek%202k%20ca%202023.der" \
+       -o KEK_2023.der
+
+  # --- db 2023 ---------------------------------------------------------
+  curl -sL "$base/DB/Certificates/microsoft%20uefi%20ca%202023.der"            -o DB_UEFI_2023.der
+  curl -sL "$base/DB/Certificates/windows%20uefi%20ca%202023.der"              -o DB_WIN_2023.der
+  curl -sL "$base/DB/Certificates/microsoft%20option%20rom%20uefi%20ca%202023.der" \
+       -o DB_OPROM_2023.der
+
+  # --- db legacy (PCA2011) ---------------------------------------------
+  curl -sL "$base/DB/Certificates/MicWinProPCA2011_2011-10-19.der"             -o DB_PCA2011.der
+
+  # --- dbx (blacklist) -------------------------------------------------
+  curl -sL "https://uefi.org/sites/default/files/resources/dbxupdate_x64.bin"  -o dbxupdate_x64.bin
+
+  log "Injection des certificats dans $VARS_SECURE…"
+  virt-fw-vars --input  "$VARS_IN" \
+               --output "$VARS_SECURE" \
+               --secure-boot \
+               --set-pk  "$UUID" PK.der \
+               --add-kek "$UUID" KEK_2023.der \
+               --add-db  "$UUID" DB_UEFI_2023.der \
+               --add-db  "$UUID" DB_WIN_2023.der \
+               --add-db  "$UUID" DB_OPROM_2023.der \
+               --add-db  "$UUID" DB_PCA2011.der \
+               --set-dbx dbxupdate_x64.bin
 
   popd >/dev/null
   rm -rf "$tmp"
   log "VARS sécurisé créé : $VARS_SECURE"
 }
+
+
 
 show_cmd() {
   local vars_path=$1
@@ -146,25 +157,13 @@ EOF
 
 main_menu() {
   echo
-  echo "  === MENU DE CONSTRUCTION OVMF ==="
-  echo "  [1] Réinitialiser l'espace de travail"
-  echo "  [2] Télécharger les sources OVMF + Appliquer patch"
-  echo "  [3] Compiler OVMF"
-  echo "  [4] Injecter les certificats"
-  echo "  [5] Afficher la commande de lancement (mode normal)"
-  echo "  [6] Afficher la commande de lancement (Secure Boot)"
-  echo "  [9] Tout faire (Reset + Fetch + Build + Certs + CMD)"
+  echo "  [1] Construire OVMF"
+  echo "  [2] Construire OVMF puis injecter certificats"
   echo "  [0] Quitter"
-  echo
   read -rp "Choix : " c
   case "$c" in
-    1) reset_workspace ;;
-    2) fetch_ovmf_sources ;;
-    3) compile_ovmf ;;
-    4) inject_certs ;;
-    5) show_cmd "$VARS_IN" ;;
-    6) show_cmd "$VARS_SECURE" ;;
-    9) reset_workspace; fetch_ovmf_sources; compile_ovmf; inject_certs; show_cmd "$VARS_SECURE" ;;
+    1) reset_workspace; build_ovmf; show_cmd "$VARS_IN" ;;
+    2) reset_workspace; build_ovmf; inject_certs; show_cmd "$VARS_SECURE" ;;
     0) exit 0 ;;
     *) log "Choix invalide" ;;
   esac
